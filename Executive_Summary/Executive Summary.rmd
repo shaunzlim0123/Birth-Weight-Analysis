@@ -1,0 +1,528 @@
+---
+title: Predictive modelling of weight at birth
+
+# Use letters for affiliations
+author:
+  - name: Flynn Entwistle, Jerry Shum, Lara Pierce, Shaun Lim, Eric Huang
+    
+# Optional: line of arbitrary text with additional information.
+# Could be used, for example, to mention the bibliographic info in a post-print.
+# If not specified, defaults to "This version was compiled on \today"
+#date_subtitle: Published in *Journal of Statistical Software*, 2018
+
+# For footer text  TODO(fold into template, allow free form two-authors)
+
+lead_author_surname: Author and Author
+
+# Abstract
+abstract: |
+  We sought to analyse the significance of 8 variables as predictors of weight at birth in a multiple regression model, using observations collected from Baystate Medical Centre, MA (n=189). A supplementary investigation also took place to compare out of sample performance between models trained on the original presentation of categorical variables, and an alternative dataset where factor levels with few observations had been merged. 6 of the studied variables were found to be significant predictors of birth weight, with merged factor levels in the case of few observations providing the best out of sample performance. 
+
+# Optional: Acknowledgements
+
+# Optional: One or more keywords
+# keywords:
+#   - one
+#   - two
+#   - optional
+#   - keywords
+#   - here
+
+# Paper size for the document, values of letter and a4
+papersize: letter
+
+# Font size of the document, values of 9pt (default), 10pt, 11pt and 12pt
+fontsize: 9pt
+
+# Optional: Force one-column layout, default is two-column
+#one_column: true
+
+# Optional: Enables lineno mode, but only if one_column mode is also true
+#lineno: true
+
+# Optional: Enable one-sided layout, default is two-sided
+#one_sided: true
+
+# Optional: Enable section numbering, default is unnumbered
+#numbersections: true
+
+# Optional: Specify the depth of section number, default is 5
+#secnumdepth: 5
+
+# Optional: Skip inserting final break between acknowledgements, default is false
+skip_final_break: true
+
+# Optional: Bibliography 
+bibliography: pinp
+
+# Optional: Enable a 'Draft' watermark on the document
+#watermark: true
+
+# Produce a pinp document
+output: pinp::pinp
+
+# Required: Vignette metadata for inclusion in a package.
+vignette: >
+  %\VignetteIndexEntry{YourPackage-vignetteentry}
+  %\VignetteKeywords{YourPackage, r, anotherkeyword}
+  %\VignettePackage{YourPackage}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignettePackage{fancyhdr}
+  
+header-includes:
+  \usepackage{float}
+  \floatplacement{figure}{h}
+  \usepackage{fancyhdr}
+  \pagestyle{fancy}
+  \fancyfoot{}
+---
+<!-- Loading libraries and cleaning code etc.  -->
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = F, include = F}
+library(tidyverse)
+library(MASS)
+library(gt)
+library(gtsummary)
+library(sjPlot)
+library(caret)
+library(cowplot)
+library(ggfortify)
+library(ggpubr)
+library(olsrr)
+library(equatiomatic)
+library(patchwork)
+library(magrittr)
+library(float)
+library(knitr)
+data("birthwt", package = "MASS")
+```
+
+```{r, message=FALSE, include = FALSE}
+# Removing low
+birthwt <- birthwt %>%
+  dplyr::select(-low)
+
+# Making necessary factor variables
+birthwt$race = factor(birthwt$race)
+birthwt$smoke = factor(birthwt$smoke)
+birthwt$ht = factor(birthwt$ht)
+birthwt$ui = factor(birthwt$ui)
+
+# Setting up units
+birthwt$lwt =  birthwt$lwt / 2.205
+
+# Renaming variables
+birthwt <- birthwt %>%
+  rename("Race" = race) %>%
+  rename("Smoking_status" = smoke) %>%
+  rename("Hypertension" = ht) %>%
+  rename("Uterine_irritability" = ui) %>%
+  rename("Premature_labours" = ptl) %>%
+  rename("First_tri_physician_visits" = ftv) %>%
+  rename("Birth_weight" = bwt) %>%
+  rename("Mother_age" = age) %>%
+  rename("Weight_at_last_menstruation" = lwt)
+
+# Making categorical predictors more informative
+birthwt <- birthwt %>%
+  mutate(Smoking_status = case_when(Smoking_status == 0 ~ "Non-smoker", Smoking_status == 1 ~ "Smoker"),
+         Race = case_when(Race == 1 ~ "White", Race == 2 ~ "Black", T ~ "Other"),
+         Hypertension = case_when(Hypertension == 0 ~ "No", T ~ "Yes"),
+         Uterine_irritability = case_when(Uterine_irritability == 0 ~ "No", T ~ "Yes"))
+```
+
+\pagestyle{fancy}
+\fancyfoot{}
+\small
+
+# Introduction
+Low birth weight expresses comorbidity with a broad range of health complications among infants, shown to be prevalent in 15-20% of newborn mortality cases worldwide, and a predictor for stunting and other metabolic risk factors in later life ([McCormick, 1985](https://pubmed.ncbi.nlm.nih.gov/3880598/)). But despite its effects being well documented in the current scientific literature, predictors of low birth weight during pregnancy remain scarcely considered. Addressing this deficit, we sought to find the most significant predictors of low birth weight. Multiple regression models were constructed for this purpose, before choosing one which optimised for out of sample performance to increase the how well our model generalised to future observations. Future investigations should consider how well the findings of this study generalise to predict birth weight within a more diverse sample - between different hospitals and regions.
+
+## Discussion of data
+The `birthwt` dataset obtained from the `MASS` package contains observations from $(n=189)$ mothers collected in 1986 at Baystate Medical Centre in Springfield, Massachusetts. The dataset contained 10 variables in total. For the purposes of this study, we took infant birth weight as the dependent variable. `low` provided no useful information in predicting birth weight, so was dropped from the dataset. This left 4 numerical and 4 categorical independent variables which we could investigate as predictors of birth weight. Studied variables were renamed and transformed to metric units for legibility and ease of comparison. [Table A1](tba1) contains a tabular summary of the dataset.
+
+# Analysis
+## Preliminary transformations
+From our EDA, we knew some predictors to individually not satisfy our assumptions with respect to the dependent variable.
+
+```{r fig1, fig.cap = "Premature labours and first trimester physician visits against birth weight (numerical)", fig.height = 1.9, message = F, echo = F}
+p1 <- birthwt %>%
+  ggplot() +
+  aes(y=Birth_weight, x = Premature_labours) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_cor(
+   aes(label = paste(..rr.label.., sep = "~`,`~")),
+  label.x = 1
+) +
+  labs(y = "Birth weight (g)", x = "Premature labours") +
+  theme_bw() +
+  theme(text = element_text(size=9))
+
+p2 <- birthwt %>%
+  ggplot(aes(x = First_tri_physician_visits, y = Birth_weight)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+stat_cor(
+   aes(label = paste(..rr.label.., sep = "~`,`~")),
+  label.x = 1
+) +
+  theme(text = element_text(size=9)) +
+  labs(y = "Birth weight (g)", x = "Physician visits (1st tri.)") +
+  theme_bw() +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), text = element_text(size=9))
+
+p_ptl.and.ftv.numerical <- plot_grid(p1, p2, rel_widths = c(1.25, 1))
+p_ptl.and.ftv.numerical
+suppressMessages(ggsave("ptl and ftv numerical.pdf", p_ptl.and.ftv.numerical))
+```
+
+[Figure 1](fig1) shows the discrete numerical variables *number of premature labours* and *first trimester physician visits* to each have too few intervals to confidently suggest a linear relationship.
+
+No mathematical transformations would be appropriate here. But, rather than dropping these variables from the model, their few unique values allowed us to reasonably transform them into categorical variables as per [Figure 2](fig2)
+\small
+
+```{r}
+birthwt$Premature_labours %<>% factor()
+birthwt$First_tri_physician_visits %<>% factor()
+```
+
+```{r fig1.5, echo = F, fig.cap = "Premature labours and first trimester physician visits against birth weight (factored)", fig.height = 2.4}
+ptl_fact_box <- birthwt %>%
+  ggplot(aes(x = Premature_labours, y = Birth_weight, fill = Premature_labours)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.2) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_bw() +
+  labs(y = "Birth weight (g)", x = "Premature labours") +
+  theme(legend.position = "none", text = element_text(size=9)) 
+
+ftv_fact_box <- birthwt %>%
+  ggplot(aes(x = First_tri_physician_visits, y = Birth_weight, fill = First_tri_physician_visits)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.2) +
+  theme_bw() +
+  labs(y = "Birth weight (g)", x = "Physician visits (1st tri.)") +
+  theme(legend.position = "none", axis.title.y = element_blank(), axis.text.y = element_blank(), text = element_text(size=9)) 
+
+factored.ptl.ftv.plots <- plot_grid(ptl_fact_box, ftv_fact_box, rel_widths = c(1.25, 1))
+
+factored.ptl.ftv.plots
+
+# suppressMessages(ggsave("ptl and ftv factored.pdf", factored.ptl.ftv.plots))
+```
+
+Additionally, it was found that when applying a log transformation to *weight at last menstruation*, linearity and homoscedascity assumptions were more confidently satisfied against the dependent variable, with a more uniform spread of residuals above and below 0 when plotting against fitted values. 
+
+\small 
+```{r, message = F, include = F}
+birthwt <- birthwt %>%
+  mutate(log_weight_at_last_menstruation = log(Weight_at_last_menstruation)) %>%
+  select(-Weight_at_last_menstruation)
+```
+
+```{r, eval = F}
+birthwt %<>% mutate(log_weight_at_last_menstruation
+           = log(Weight_at_last_menstruation))
+```
+
+## Alternative dataset with merged `ptl` and `ftv` levels 
+Factorising premature labours and first trimester physician visits allowed our linearity assumptions to be met, but created some levels with very few observations $(n\leq 5)$.
+
+We hypothesised that this could be a source of overfitting - unnecessarily complicating our model with extra predictors whilst providing unreliable information about the dependent variable at these levels. 
+
+To test for this, we created an alternative dataset where levels with few observations in these variables had been merged together as per [Table 1](tab1).
+
+```{r, include = F}
+birthwt.merged.lvls <- birthwt %>%
+  mutate(Premature_labours = case_when(Premature_labours == 0 ~ "0", T ~ ">= 1"),
+         First_tri_physician_visits = case_when(First_tri_physician_visits == 0 ~ "0",
+                                                First_tri_physician_visits == 1 ~ "1",
+                                                First_tri_physician_visits == 2 ~ "2",
+                                                T ~ ">= 3"))
+
+birthwt.merged.lvls$Premature_labours <- factor(birthwt.merged.lvls$Premature_labours, levels = c("0", ">= 1"))
+birthwt.merged.lvls$First_tri_physician_visits = factor(birthwt.merged.lvls$First_tri_physician_visits, levels = c("0", "1", "2", ">= 3"))
+```
+
+```{r fig1.9, echo = F, fig.cap = "Premature labours and first trimester physician visits against birth weight (merged factor levels)", fig.height = 2.2, include = F}
+merged.ptl <- birthwt.merged.lvls %>%
+  ggplot(aes(x = Premature_labours, y = Birth_weight, fill = Premature_labours)) +
+  geom_boxplot() +
+  geom_hline(yintercept = mean(birthwt.merged.lvls$Birth_weight), colour = "red") +
+  labs(x = "Premature labours", y = "Birth weight") +
+  geom_jitter(alpha = 0.3) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_bw() +
+  labs(y = "Birth weight (g)", x = "Premature labours") +
+  theme(legend.position = "none")
+
+merged.ftv <- birthwt.merged.lvls %>%
+  ggplot(aes(x = First_tri_physician_visits, y = Birth_weight, fill = First_tri_physician_visits)) +
+  geom_boxplot() +
+  geom_hline(yintercept = mean(birthwt.merged.lvls$Birth_weight), colour = "red") +
+  labs(y = "Birth weight (g)", x = "Physician visits (1st tri.)") +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  theme(legend.position = "none", axis.title.y = element_blank(), axis.text.y = element_blank())
+
+plot_grid(merged.ptl, merged.ftv)
+```
+
+```{r, include = F}
+basic_theme <- function(data) {
+  tab_options(
+    data,
+    column_labels.border.top.color = "white",
+    column_labels.border.top.width = px(3),
+    column_labels.border.bottom.color = "black",
+    column_labels.font.weight = "bold",
+    table_body.hlines.color = "white",
+    table.border.bottom.color = "white",
+    table.border.bottom.width = px(3),
+    data_row.padding = px(3)
+  ) 
+}
+```
+
+```{r, include = F}
+ptl.original <- birthwt %>%
+  select(Premature_labours) %>%
+  count(Premature_labours)
+
+ftv.original <- birthwt %>%
+  select(First_tri_physician_visits) %>%
+  count(First_tri_physician_visits)
+
+ptl.merged <- birthwt.merged.lvls %>%
+  select(Premature_labours) %>%
+  count(Premature_labours)
+
+ftv.merged <- birthwt.merged.lvls %>%
+  select(First_tri_physician_visits) %>%
+  count(First_tri_physician_visits)
+
+tabdat.ptl <- merge(x = ptl.original, y = ptl.merged, by = "Premature_labours", all = TRUE) %>%
+  rename("Original factor levels" = n.x, "Merged factor levels" = n.y, "Levels" = Premature_labours)
+
+ptl.tab <- tabdat.ptl %>% 
+  rename("ogfact.ptl" = `Original factor levels`, "mergfact.ptl" = `Merged factor levels`) %>%
+  gt() %>%
+  tab_style(
+    style = cell_text(color = "black", weight = "bold"),
+    locations = list(
+      cells_row_groups(),
+      cells_column_labels(everything())
+    )
+  ) %>%
+  tab_style(style = cell_fill(color = "grey"),
+            locations = cells_body(columns = ogfact.ptl, 
+                                   rows = is.na(ogfact.ptl))) %>%
+  tab_style(style = cell_fill(color = "grey"),
+            locations = cells_body(columns = mergfact.ptl, 
+                                   rows = is.na(mergfact.ptl))) %>% 
+  tab_style(style = cell_text(color = "blue"),
+            locations = cells_body(columns = ogfact.ptl, 
+                                   rows = ogfact.ptl < 35)) %>%
+  tab_style(style = cell_text(color = "red"),
+            locations = cells_body(columns = ogfact.ptl, 
+                                   rows = ogfact.ptl < 10)) %>% 
+  tab_style(style = cell_text(color = "blue"),
+            locations = cells_body(columns = mergfact.ptl, 
+                                   rows = mergfact.ptl < 35)) %>%
+  tab_style(style = cell_text(color = "red"),
+            locations = cells_body(columns = mergfact.ptl, 
+                                   rows = mergfact.ptl < 10)) %>%
+  sub_missing() %>%
+  cols_label(
+    ogfact.ptl = "Original factor levels",
+    mergfact.ptl = "Merged factor levels",
+    Levels = "Premature labours"
+  ) %>%
+  basic_theme()
+```
+
+```{r, include = F}
+tabdat.ftv <- merge(x = ftv.original, y = ftv.merged, by = "First_tri_physician_visits", all = TRUE) %>%
+  rename("Original factor levels" = n.x, "Merged factor levels" = n.y, "Levels" = First_tri_physician_visits) 
+
+ftv.tab <- tabdat.ftv %>% 
+  rename("ogfact.ftv" = `Original factor levels`, "mergfact.ftv" = `Merged factor levels`) %>%
+  gt() %>%
+  tab_style(
+    style = cell_text(color = "black", weight = "bold"),
+    locations = list(
+      cells_row_groups(),
+      cells_column_labels(everything())
+    )
+  ) %>%
+  tab_style(style = cell_fill(color = "grey"),
+            locations = cells_body(columns = ogfact.ftv, 
+                                   rows = is.na(ogfact.ftv))) %>%
+  tab_style(style = cell_fill(color = "grey"),
+            locations = cells_body(columns = mergfact.ftv, 
+                                   rows = is.na(mergfact.ftv))) %>% 
+  tab_style(style = cell_text(color = "blue"),
+            locations = cells_body(columns = ogfact.ftv, 
+                                   rows = ogfact.ftv < 15)) %>%
+  tab_style(style = cell_text(color = "red"),
+            locations = cells_body(columns = ogfact.ftv, 
+                                   rows = ogfact.ftv < 7)) %>% 
+  tab_style(style = cell_text(color = "blue"),
+            locations = cells_body(columns = mergfact.ftv, 
+                                   rows = mergfact.ftv < 15)) %>%
+  tab_style(style = cell_text(color = "red"),
+            locations = cells_body(columns = mergfact.ftv, 
+                                   rows = mergfact.ftv < 7)) %>%
+  sub_missing() %>%
+  cols_label(
+    ogfact.ftv = "Original factor levels",
+    mergfact.ftv = "Merged factor levels",
+    Levels = "1st tri. physician visits"
+  ) %>%
+  basic_theme()
+``` 
+
+```{r, include = F}
+ptl.tab %>% gtsave("ptltab.png")
+ftv.tab %>% gtsave("ftvtab.png")
+```
+
+
+\begin{table}[h]
+\begin{minipage}{.28\textwidth}
+  \includegraphics[width=\textwidth, height = 2.65cm]{ptltab}
+\end{minipage}%
+\begin{minipage}{0.3\textwidth}
+  \includegraphics[width=\textwidth, height = 2.75cm]{ftvtab}
+\end{minipage}%
+\caption{Level merging - Premature labours (left) and First trimester physician visits (right)}
+\end{table}
+These will be analysed in comparison with models trained on the original presentation of these factors.
+
+## Post-transformation assumption checking
+After transformation, we constructed full models for both datasets incorporating all variables as predictors of birth weight. 
+
+\small
+
+```r
+M1.original <- lm(Birth_weight ~ ., data=birthwt)
+M1.merged <- lm(Birth_weight ~ ., data=birthwt.mrgd.lvls)
+```
+
+Assumptions were checked for each model:
+
+- By experimental design, the observations are naturally independent, so our **independence** assumption is satisfied. 
+- Moreover, we have a sufficient number of observations to rely on the central limit theorem to satisfy our **normality** assumption. 
+
+To check our remaining assumptions, we constructed residuals against fitted values plots for each:
+
+```{r residvfittedfull, echo=FALSE, fig.height=2.4, fig.cap = "Residuals vs Fitted values plot (Full model, post transformations)"}
+full_mod.og <- lm(Birth_weight ~ ., data = birthwt)
+full_mod.merged <- lm(Birth_weight ~ ., data = birthwt.merged.lvls)
+
+rvf.og <- autoplot(full_mod.og, which = 1)[[1]] + theme_bw() + labs(title = "Original factor levels", subtitle = "Residuals vs Fitted") + theme(text = element_text(size=8))
+
+# Deconstructing autoplot graph and making points more smaller (squishing to 2 column makes them too big)
+q <- ggplot_build(rvf.og)
+q$data[[1]]$alpha <- 0.8
+q$data[[1]]$size <- 1
+q <- ggplot_gtable(q)
+rvf.og <- q
+
+rvf.merged <- autoplot(full_mod.merged, which = 1)[[1]] + theme_bw() + labs(title = "Merged factor levels", subtitle = "Residuals vs Fitted") + theme(axis.title.y = element_blank(), axis.text.y = element_blank(), text = element_text(size=8))
+
+q <- ggplot_build(rvf.merged)
+q$data[[1]]$alpha <- 0.8
+q$data[[1]]$size <- 1
+q <- ggplot_gtable(q)
+rvf.merged <- q
+
+plot_grid(rvf.og, rvf.merged, rel_widths = c(1.25, 1))
+```
+
+[Figure 3](residvfittedfull) shows no obvious non-linear pattern in the residuals in either plot, with residuals approximately equally distributed about 0, so our **linearity** and **homoscedascity** assumptions were similarly satisfied. 
+
+## Model selection
+With our assumptions satisfied, we began stepwise variable selection to construct models for each dataset, including only the most significant predictors. 
+
+For each dataset, forward and backward selection procedures produced the same models, with only `mother age`, and `first trimester physician visits` dropped from the model. This choice of selected predictors was further verified by an exhaustive search - finding the same models for each dataset for the same number of predictors.
+
+The normality and independence assumptions for these newly constructed models remained unchanged from the full models. Residual vs fitted values plots ([Figure A1](figa1)) were constructed to reassess our linearity and homoscedascity assumptions, which were found to still be satisfied.
+
+# Results
+
+## In-sample performance
+
+\begin{table}[h]
+  \includegraphics[width=0.5\textwidth, height=0.4cm]{titles}
+  \includegraphics[width=0.5\textwidth, height=1.2cm]{results}
+\caption{$R^2$ and AIC of each model}
+\end{table}
+
+[Table 2](ll) shows the coefficient of determination, $R^2$, was highest in the model with the most predictors, and lowest in the model with the least predictors. This was to be expected, as adding more predictors to a model will always have a non-increasing effect on the residual sum of squares. 
+
+Accordingly, the full model with the most number of predictors explained the greatest proportion of variation within our results, giving it the best in-sample performance.
+
+However, this statistic alone tells us little about how the models perform on unseen data, which the AIC attempts to account for by penalising for more predictors, discouraging overfitting and hinting at better out-of-sample performance. 
+
+We had significant reductions in AIC between each full model and its refined alternative, indicating our refined models had better fit per added predictor. Between the two refined models, the alternative with original factor levels of premature labours had a marginally better AIC by ~2 points - making them approximately equally well fitting.
+
+An expanded version of [Table 2](tb2) including model coefficients can be found in the appendix, as [Table A2](tba2).
+
+## Validating out of sample performance
+To gauge out of sample performance, we performed 10-fold cross-validation with 1000 repeats, with the results shown in [Figure 4](fig4). Significant reductions in Root Mean Squared Error and Mean Absolute Error that in our refined models, after dropping the least significant predictors. Our models trained on the data with merged factor levels also had better out of sample performance than those trained on the original factor levels. 
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
+
+## Final model and interpretation
+In choosing our final model, we prioritised out of sample performance to allow to optimise for generalisability to future observations, whilst also balancing for reasonable in-sample performance. Accordingly, we chose the refined model with merged factor levels - having the best out of sample performance at minimal cost to $R^2$:
+
+\begin{small}
+\begin{flalign*}
+& \widehat{\textcolor{blue}{\text{Birth weight}}} = 610.22 + 132.66(\operatorname{\textcolor{blue}{Race}}_{\operatorname{Other}}) + 460.01(\operatorname{\textcolor{blue}{Race}}_{\operatorname{White}}) \\ &-  316.87(\operatorname{\textcolor{blue}{Smoke}}_{\operatorname{Yes}}) - 211.68(\operatorname{\textcolor{blue}{PTL}}_{\operatorname{>=\ 1}}) - 562.41(\operatorname{\textcolor{blue}{HT}}_{\operatorname{Yes}}) \\ &- 483.45(\operatorname{\textcolor{blue}{UI}}_{\operatorname{Yes}}) + 572.37(\operatorname{\textcolor{blue}{\log(LMW)}})
+\end{flalign*}
+\end{small}
+
+Holding all other predictors constant, mothers of "other" and "white" race had positive correlations with birth weight in comparison to black mothers, whereas histories of smoking, premature labour/s, hypertension, and uterine irritation were negatively correlated with birth weight.
+
+On average, a one percent increase in weight at last menstruation would be expected to result in a 5.7 gram increase in weight at birth.
+
+## Discussion and conclusion
+At the cost of avoiding overfitting, we merged factor levels in the number of premature labour & number of first trimester physician visits, resulting in a loss of information. This contributes to a limitation of our analysis, since our model is blind to any differences from observations larger than our unique categories. This possibly introduces bias and limits the model’s predictive capacity.  
+
+Our data is only collected from one US medical centre, which is not a representative sample of the wider population. This induces selection bias, and the observations may not generalise well to other populations.  
+
+To overcome both of these limitations, more data collection is required. A random sample with more observations would provide us with more information, possibly reducing the necessity of merging factor levels. It would also reduce selection bias, and provide better overall model predictions.
+
+In summary, there was a significant improvement in accuracy and a decrease in errors for out of sample performance when we used our refined model with merged factor levels. This was sufficiently balanced, at the worthwhile expense of a slightly smaller $R^2$ value. We also found that the variables of mother’s age and number of physician visits were not very informative predictors for birth weight and hence could be dropped from the regression model entirely.
