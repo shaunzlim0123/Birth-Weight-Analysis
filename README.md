@@ -1,6 +1,6 @@
 # Predictive Modeling of Birth Weight
 
-Welcome to the **Predictive Modeling of Birth Weight** repository! This project is an in-depth analysis of the factors affecting infant birth weight, developed as a comprehensive portfolio piece to demonstrate proficiency in statistical modeling, data transformation, and evaluation of predictive models.
+Welcome to the **Predictive Modeling of Birth Weight** repository! This project is an in-depth analysis of the factors affecting infant birth weight to demonstrate proficiency in statistical modeling, data transformation, and evaluation of predictive models.
 
 ## Table of Contents
 
