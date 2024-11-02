@@ -78,11 +78,7 @@ The refined model with merged factor levels demonstrated better generalizability
 
 The final regression equation is:
   
-\[
-\hat{\text{Birth weight}} = 610.22 + 132.66(\text{RaceOther}) + 460.01(\text{RaceWhite}) 
-- 316.87(\text{SmokeYes}) - 211.68(\text{PTL} \geq 1) - 562.41(\text{HTYes}) 
-- 483.45(\text{UIYes}) + 572.37(\log(\text{LMW}))
-\]
+![Equation](path_to_your_image.png)
 
 This model highlights the positive impact of race (Other and White) and the negative impact of smoking, premature labors, hypertension, and uterine irritation on birth weight.
 
