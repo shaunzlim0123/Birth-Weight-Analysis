@@ -78,7 +78,7 @@ The refined model with merged factor levels demonstrated better generalizability
 
 The final regression equation is:
   
-![Equation](path_to_your_image.png)
+![Equation](regression_model_formula.png)
 
 This model highlights the positive impact of race (Other and White) and the negative impact of smoking, premature labors, hypertension, and uterine irritation on birth weight.
 
